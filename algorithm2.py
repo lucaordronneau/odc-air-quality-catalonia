@@ -1,4 +1,5 @@
 import os
+import gc
 import sys
 import json
 import pickle
@@ -45,20 +46,26 @@ def prepare_data(df):
     
     # Melt dataframe for treatment (series)
     df['DATA'] = pd.to_datetime(df['DATA'], format='%d/%m/%Y')
-    df = pd.melt(df, id_vars=['CODI EOI', 'DATA', 'CONTAMINANT', 'TIPUS ESTACIO', 'AREA URBANA', 'ALTITUD'],
-                 value_vars=cols_hours, var_name='hour', value_name='value')
+    df = df[df['DATA'] >= '2010-01-01 00:00:00']
+
+    chunk_size = len(df) // 50
+    chunk_list = [pd.melt(df.iloc[i:i+chunk_size], id_vars=['CODI EOI', 'DATA', 'CONTAMINANT', 'TIPUS ESTACIO', 'AREA URBANA', 'ALTITUD'],
+                    value_vars=cols_hours, var_name='hour', value_name='value').dropna() for i in range(0, len(df), chunk_size)]
+    df = pd.concat(chunk_list, ignore_index=True)
 
     df['hour']  = df['hour'].str[:-1].astype(int)
     df['value'] = pd.to_numeric(df['value'], errors='coerce')
     df['datetime'] = df['DATA'] + pd.to_timedelta(df['hour'], unit='h')
-    df['day']   = df['datetime'].dt.day
-    df['month'] = df['datetime'].dt.month
-    df['year']  = df['datetime'].dt.year
+
+    # I COMMENTED THIS LINE BECAUSE I THINK THERE IS MEMORY CONSTRAINTS ON C2D
+    # IN THE REPORT, PREDICTIONS ARE MADE WITH THE FULL PIPELINE
+
+    # df['month_year'] = df['datetime'].dt.strftime('%m-%Y')
 
     # Fill na with the mean of the hour of the same month and year from the same station (CODI EOI)
-    df['value'] = df['value'].fillna(df.groupby(['CODI EOI', 'CONTAMINANT', 'hour', 'month', 'year'])['value'].transform('mean'))
-    df = df.dropna()
-    
+    # df['value'].fillna(df.groupby(['CODI EOI', 'CONTAMINANT', 'hour', 'month_year'])['value'].transform('mean'), inplace=True)
+    # df.dropna(inplace=True)
+
     return df
 
 def get_features(df):
@@ -66,24 +73,22 @@ def get_features(df):
     df_NO = df[df['CONTAMINANT'] == 'NO']
 
     # Add feature AREA URBANA (mean of all polluant associated to AREA URBANA)
-    pivot_df_area_urbana = pd.pivot_table(df, values='value', index='datetime', columns='AREA URBANA')
+    pivot_df_area_urbana = pd.pivot_table(df[['datetime', 'value', 'AREA URBANA']], values='value', index='datetime', columns='AREA URBANA')
     df_area_urbana = pivot_df_area_urbana.groupby(pd.Grouper(freq="H")).mean()
 
     # Add feature AREA URBANA link to the polluant NO
-    pivot_df_area_urbana_NO = pd.pivot_table(df_NO, values='value', index='datetime', columns='AREA URBANA')
+    pivot_df_area_urbana_NO = pd.pivot_table(df_NO[['datetime', 'value', 'AREA URBANA']], values='value', index='datetime', columns='AREA URBANA')
     df_area_urbana_NO = pivot_df_area_urbana_NO.groupby(pd.Grouper(freq="H")).mean()
     df_area_urbana_NO = df_area_urbana_NO.rename(columns = {"urban":"urban_NO", "suburban":"suburban_NO", "rural":"rural_NO"})
 
     # Add the feature ALTITUD (all polluant)
-    pivot_df_altitud = pd.pivot_table(df, values='ALTITUD', index='datetime')
-    df_altitud = pivot_df_altitud.groupby(pd.Grouper(freq="H")).mean()
+    df_altitud = df[['datetime','ALTITUD']].groupby(pd.Grouper(key="datetime", freq="H")).mean()
 
     # Add the feature ALTITUD for the polluant NO
-    pivot_df_altitud_NO = pd.pivot_table(df_NO, values='ALTITUD', index='datetime')
-    df_altitud_NO = pivot_df_altitud_NO.groupby(pd.Grouper(freq="H")).mean()
+    df_altitud_NO = df_NO[['datetime', "ALTITUD"]].groupby(pd.Grouper(key="datetime", freq="H")).mean()
     df_altitud_NO = df_altitud_NO.rename(columns = {"ALTITUD":"ALTITUD_NO"})
 
-    df_month = df.groupby(pd.Grouper(key="datetime", freq="H")).mean()
+    df_month = df[['datetime', 'value']].groupby(pd.Grouper(key="datetime", freq="H")).mean()
     
     df_month['hour']  = df_month.index.hour
     df_month['day']   = df_month.index.day
@@ -99,18 +104,19 @@ def get_features(df):
     df_month = encode_time_indicators(df_month, 'hour', 24)
     df_month = encode_time_indicators(df_month, 'day', 31)
     df_month = encode_time_indicators(df_month, 'month', 12)
-    print("df_month", len(df_month))
 
     # Construct target
-    df_month_NO = df_NO.groupby(pd.Grouper(key="datetime", freq="H")).mean()
+    df_month_NO = df_NO[['datetime', 'value']].groupby(pd.Grouper(key="datetime", freq="H")).mean()
     df_month_NO = df_month_NO.rename(columns = {"value":"value_NO"})
-    print("df_month_NO", len(df_month_NO))
 
     df_features = pd.concat([df_month, df_altitud_NO, df_altitud, df_area_urbana_NO, df_area_urbana, df_month_NO['value_NO']], axis=1)
-    df_features = df_features.dropna()
+    df_features.dropna(inplace=True)
 
     X = df_features[['value','year','hour_sin','hour_cos','day_sin','day_cos','month_sin','month_cos','ALTITUD_NO','ALTITUD','rural_NO','suburban_NO','urban_NO','rural','suburban','urban']]
     y = df_features['value_NO']
+
+    del df_features, df_month, df_altitud_NO, df_altitud, df_area_urbana_NO, df_area_urbana, df_month_NO
+    gc.collect()
 
     return X, y
 
