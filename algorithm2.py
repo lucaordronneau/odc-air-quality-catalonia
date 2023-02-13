@@ -136,6 +136,7 @@ def algo(local=False):
     # SARIMAX, use additional features (X) to help explain some of the variation in the time series that cannot be explained by the ARIMA model
     model = sm.tsa.SARIMAX(y, exog=X, order=(1, 1, 1))
     results = model.fit()
+    print('Prediction for each hour between 2023-02-15 00:00:00 and 2023-02-28 23:00:00')
     pred = results.predict(start=len(y), end=len(y)+815, exog=X[-816:])
 
     pred_index = pd.date_range(start=y.index[-1], end='2023-02-28 23:00:00', freq='H')

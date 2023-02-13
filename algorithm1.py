@@ -135,6 +135,7 @@ def algo(local=False):
     # SARIMAX, use additional features (X) to help explain some of the variation in the time series that cannot be explained by the ARIMA model
     model = sm.tsa.SARIMAX(y.to_numpy(), exog=X.to_numpy(), order=(4, 1, 1), seasonal_order=(1, 0, 1, 12))
     results = model.fit()
+    print('Prediction per month for the next 24 months')
     pred = results.predict(start=len(y), end=len(y)+23, exog=X[-24:])
 
     filename = "predictions.pickle" if local else "/data/outputs/result"
