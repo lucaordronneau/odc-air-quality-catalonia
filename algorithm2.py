@@ -46,7 +46,6 @@ def prepare_data(df):
     
     # Melt dataframe for treatment (series)
     df['DATA'] = pd.to_datetime(df['DATA'], format='%d/%m/%Y')
-    df = df[df['DATA'] >= '2010-01-01 00:00:00']
 
     chunk_size = len(df) // 50
     chunk_list = [pd.melt(df.iloc[i:i+chunk_size], id_vars=['CODI EOI', 'DATA', 'CONTAMINANT', 'TIPUS ESTACIO', 'AREA URBANA', 'ALTITUD'],
@@ -57,14 +56,13 @@ def prepare_data(df):
     df['value'] = pd.to_numeric(df['value'], errors='coerce')
     df['datetime'] = df['DATA'] + pd.to_timedelta(df['hour'], unit='h')
 
-    # I COMMENTED THIS LINE BECAUSE I THINK THERE IS MEMORY CONSTRAINTS ON C2D
-    # IN THE REPORT, PREDICTIONS ARE MADE WITH THE FULL PIPELINE
+    # POTENTIAL MEMORY CONSTRAINTS ON C2D
 
-    # df['month_year'] = df['datetime'].dt.strftime('%m-%Y')
+    df['month_year'] = df['datetime'].dt.strftime('%m-%Y')
 
     # Fill na with the mean of the hour of the same month and year from the same station (CODI EOI)
-    # df['value'].fillna(df.groupby(['CODI EOI', 'CONTAMINANT', 'hour', 'month_year'])['value'].transform('mean'), inplace=True)
-    # df.dropna(inplace=True)
+    df['value'].fillna(df.groupby(['CODI EOI', 'CONTAMINANT', 'hour', 'month_year'])['value'].transform('mean'), inplace=True)
+    df.dropna(inplace=True)
 
     return df
 
@@ -127,10 +125,14 @@ def algo(local=False):
         print("Could not retrieve filename.")
         return
 
+    print('Load CSV')
     df = pd.read_csv(filename)
+    print('Prepare data')
     df = prepare_data(df)
+    print('Create features')
     X, y = get_features(df)
 
+    print('Model')
     # SARIMAX, use additional features (X) to help explain some of the variation in the time series that cannot be explained by the ARIMA model
     model = sm.tsa.SARIMAX(y, exog=X, order=(1, 1, 1))
     results = model.fit()
